@@ -47,5 +47,11 @@ private static Object decodeConstant(String kind, Object data) {
 	}
 }
 
+static CallSite bsm_var(Lookup lookup, String kind, MethodType type, String ns, String name) {
+	Class<?> expectedType = type.returnType();
+	Var var = RT.var(ns, name);
+	return new ConstantCallSite(constant(expectedType, var).asType(type));
+}
+
 
 }

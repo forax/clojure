@@ -166,10 +166,13 @@ final static Method createTupleMethods[] = {Method.getMethod("clojure.lang.IPers
 };
 
 final static Handle BSM_CONSTANT;
+final static Handle BSM_VAR;
 static {
 	String rtInternalName = RT_TYPE.getInternalName();
 	BSM_CONSTANT = new Handle(Opcodes.H_INVOKESTATIC, rtInternalName,
 			"bsm_constant", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/Object;)Ljava/lang/invoke/CallSite;", false);
+	BSM_VAR = new Handle(Opcodes.H_INVOKESTATIC, rtInternalName,
+			"bsm_var", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/invoke/CallSite;", false);
 }
 
 private static final Type[][] ARG_TYPES;
@@ -4831,12 +4834,19 @@ static public class ObjExpr implements Expr{
 //								                 Method.getMethod("clojure.lang.KeywordCallSite create(clojure.lang.Symbol)"));
 //								}
 		else if(value instanceof Var)
-			{
-			Var var = (Var) value;
-			gen.push(var.ns.name.toString());
-			gen.push(var.sym.toString());
-			gen.invokeStatic(RT_TYPE, Method.getMethod("clojure.lang.Var var(String,String)"));
-			}
+			if (emitUsingInvokedynamic)
+				{
+				Var var = (Var) value;
+				gen.invokeDynamic("var", "()" + VAR_TYPE.getDescriptor(),
+						BSM_VAR, var.ns.name.toString(), var.sym.toString());
+				}
+			else
+				{
+				Var var = (Var) value;
+			  gen.push(var.ns.name.toString());
+			  gen.push(var.sym.toString());
+			  gen.invokeStatic(RT_TYPE, Method.getMethod("clojure.lang.Var var(String,String)"));
+			  }
 		else if(value instanceof IType)
 			{
 			Method ctor = new Method("<init>", Type.getConstructorDescriptor(value.getClass().getConstructors()[0]));

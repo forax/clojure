@@ -2397,5 +2397,8 @@ public static CallSite bsm_constant(MethodHandles.Lookup lookup, String kind, Me
   return RTMetaFactories.bsm_constant(lookup, kind, type, data);	
 }
 
+public static CallSite bsm_var(MethodHandles.Lookup lookup, String kind, MethodType type, String ns, String name) {
+  return RTMetaFactories.bsm_var(lookup, kind, type, ns, name);	
+}
 
 }
