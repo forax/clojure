@@ -165,6 +165,13 @@ final static Method createTupleMethods[] = {Method.getMethod("clojure.lang.IPers
         Method.getMethod("clojure.lang.IPersistentVector create(Object,Object,Object,Object,Object,Object)")
 };
 
+final static Handle BSM_CONSTANT;
+static {
+	String rtInternalName = RT_TYPE.getInternalName();
+	BSM_CONSTANT = new Handle(Opcodes.H_INVOKESTATIC, rtInternalName,
+			"bsm_constant", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/Object;)Ljava/lang/invoke/CallSite;", false);
+}
+
 private static final Type[][] ARG_TYPES;
 //private static final Type[] EXCEPTION_TYPES = {Type.getType(Exception.class)};
 private static final Type[] EXCEPTION_TYPES = {};
@@ -257,6 +264,7 @@ static final public Var ADD_ANNOTATIONS = Var.intern(Namespace.findOrCreate(Symb
 static final public Keyword disableLocalsClearingKey = Keyword.intern("disable-locals-clearing");
 static final public Keyword directLinkingKey = Keyword.intern("direct-linking");
 static final public Keyword elideMetaKey = Keyword.intern("elide-meta");
+static final public Keyword emitInvokeDynamicKey = Keyword.intern("emit-indy");
 
 static final public Var COMPILER_OPTIONS;
 
@@ -1901,11 +1909,14 @@ static class NumberExpr extends LiteralExpr implements MaybePrimitiveExpr{
 
 	public void emit(C context, ObjExpr objx, GeneratorAdapter gen){
 		if(context != C.STATEMENT)
-			{
-			objx.emitConstant(gen, id);
+			if (RT.booleanCast(getCompilerOption(emitInvokeDynamicKey)))
+				objx.emitValue(n, gen);
+			else
+			  {
+			  objx.emitConstant(gen, id);
 //			emitUnboxed(context,objx,gen);
 //			HostExpr.emitBoxReturn(objx,gen,getJavaClass());
-			}
+			  }
 	}
 
 	public boolean hasJavaClass() {
@@ -1965,7 +1976,11 @@ static class ConstantExpr extends LiteralExpr{
 	}
 
 	public void emit(C context, ObjExpr objx, GeneratorAdapter gen){
-		objx.emitConstant(gen, id);
+		if (RT.booleanCast(getCompilerOption(emitInvokeDynamicKey)) &&
+				(v instanceof Class || v instanceof Symbol || v instanceof Pattern))
+			objx.emitValue(v, gen);
+		else
+		  objx.emitConstant(gen, id);
 
 		if(context == C.STATEMENT)
 			{
@@ -4709,6 +4724,7 @@ static public class ObjExpr implements Expr{
 	void emitValue(Object value, GeneratorAdapter gen){
 		boolean partial = true;
 		//System.out.println(value.getClass().toString());
+    boolean emitUsingInvokedynamic = RT.booleanCast(getCompilerOption(emitInvokeDynamicKey));
 
 		if(value == null)
 			gen.visitInsn(Opcodes.ACONST_NULL);
@@ -4724,21 +4740,37 @@ static public class ObjExpr implements Expr{
 				gen.getStatic(BOOLEAN_OBJECT_TYPE,"FALSE",BOOLEAN_OBJECT_TYPE);
 			}
 		else if(value instanceof Integer)
-			{
-			gen.push(((Integer) value).intValue());
-			gen.invokeStatic(Type.getType(Integer.class), Method.getMethod("Integer valueOf(int)"));
-			}
+			if (emitUsingInvokedynamic)
+				gen.invokeDynamic("integer", "()Ljava/lang/Integer;",
+						BSM_CONSTANT, value);
+			else
+				{
+				gen.push(((Integer) value).intValue());
+			  gen.invokeStatic(Type.getType(Integer.class), Method.getMethod("Integer valueOf(int)"));
+			  }
 		else if(value instanceof Long)
-			{
-			gen.push(((Long) value).longValue());
-			gen.invokeStatic(Type.getType(Long.class), Method.getMethod("Long valueOf(long)"));
-			}
+			if (emitUsingInvokedynamic)
+				gen.invokeDynamic("long", "()Ljava/lang/Long;",
+						BSM_CONSTANT, value);
+			else
+				{
+				gen.push(((Long) value).longValue());
+				gen.invokeStatic(Type.getType(Long.class), Method.getMethod("Long valueOf(long)"));
+				}
 		else if(value instanceof Double)
+			if (emitUsingInvokedynamic)
+				gen.invokeDynamic("double", "()Ljava/lang/Double;",
+						BSM_CONSTANT, value);
+			else
 				{
 				gen.push(((Double) value).doubleValue());
 				gen.invokeStatic(Type.getType(Double.class), Method.getMethod("Double valueOf(double)"));
 				}
 		else if(value instanceof Character)
+			if (emitUsingInvokedynamic)
+				gen.invokeDynamic("character", "()Ljava/lang/Character;",
+						BSM_CONSTANT, (int)(char)value);
+			else
 				{
 				gen.push(((Character) value).charValue());
 				gen.invokeStatic(Type.getType(Character.class), Method.getMethod("Character valueOf(char)"));
@@ -4761,6 +4793,9 @@ static public class ObjExpr implements Expr{
 						"Can't embed unknown primitive in code: " + value);
 				gen.getStatic( bt, "TYPE", Type.getType(Class.class) );
 				}
+			else if (emitUsingInvokedynamic)
+				gen.invokeDynamic("class", "()Ljava/lang/Class;",
+						BSM_CONSTANT, destubClassName(cc.getName()));
 			else
 				{
 				gen.push(destubClassName(cc.getName()));
@@ -4768,19 +4803,27 @@ static public class ObjExpr implements Expr{
 				}
 			}
 		else if(value instanceof Symbol)
-			{
-			gen.push(((Symbol) value).ns);
-			gen.push(((Symbol) value).name);
-			gen.invokeStatic(Type.getType(Symbol.class),
-							 Method.getMethod("clojure.lang.Symbol intern(String,String)"));
-			}
+			if (emitUsingInvokedynamic)
+				gen.invokeDynamic("symbol", "()" + SYMBOL_TYPE.getDescriptor(),
+						BSM_CONSTANT, value.toString());
+			else
+				{
+				gen.push(((Symbol) value).ns);
+				gen.push(((Symbol) value).name);
+				gen.invokeStatic(Type.getType(Symbol.class),
+						Method.getMethod("clojure.lang.Symbol intern(String,String)"));
+				}
 		else if(value instanceof Keyword)
-			{
-			gen.push(((Keyword) value).sym.ns);
-			gen.push(((Keyword) value).sym.name);
-			gen.invokeStatic(RT_TYPE,
-							 Method.getMethod("clojure.lang.Keyword keyword(String,String)"));
-			}
+			if (emitUsingInvokedynamic)
+				gen.invokeDynamic("keyword", "()" + KEYWORD_TYPE.getDescriptor(),
+						BSM_CONSTANT, ((Keyword) value).sym.toString());
+			else
+				{
+				gen.push(((Keyword) value).sym.ns);
+				gen.push(((Keyword) value).sym.name);
+				gen.invokeStatic(RT_TYPE,
+						Method.getMethod("clojure.lang.Keyword keyword(String,String)"));
+				}
 //						else if(value instanceof KeywordCallSite)
 //								{
 //								emitValue(((KeywordCallSite) value).k.sym, gen);
@@ -4875,11 +4918,15 @@ static public class ObjExpr implements Expr{
 									 "clojure.lang.IPersistentList create(java.util.List)"));
 			}
 		else if(value instanceof Pattern)
-			{
-			emitValue(value.toString(), gen);
-			gen.invokeStatic(Type.getType(Pattern.class),
-							 Method.getMethod("java.util.regex.Pattern compile(String)"));
-			}
+			if (emitUsingInvokedynamic)
+				gen.invokeDynamic("pattern", "()" + Type.getType(Pattern.class).getDescriptor(),
+						BSM_CONSTANT, value.toString());
+			else
+				{
+				emitValue(value.toString(), gen);
+				gen.invokeStatic(Type.getType(Pattern.class),
+						Method.getMethod("java.util.regex.Pattern compile(String)"));
+				}
 		else
 			{
 			String cs = null;
@@ -5198,9 +5245,14 @@ static public class ObjExpr implements Expr{
 	}
 
 	public void emitKeyword(GeneratorAdapter gen, Keyword k){
-		Integer i = (Integer) keywords.valAt(k);
-		emitConstant(gen, i);
+		if (RT.booleanCast(getCompilerOption(emitInvokeDynamicKey)))
+			emitValue(k, gen);
+		else
+			{
+			Integer i = (Integer) keywords.valAt(k);
+			emitConstant(gen, i);
 //		gen.getStatic(fntype, munge(k.sym.toString()), KEYWORD_TYPE);
+			}
 	}
 
 	public void emitConstant(GeneratorAdapter gen, int id){

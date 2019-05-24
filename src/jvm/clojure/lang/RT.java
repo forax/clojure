@@ -19,6 +19,7 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.io.*;
+import java.lang.invoke.*;
 import java.lang.reflect.Array;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -2390,6 +2391,10 @@ static public int alength(Object[] xs){
 
 static public Object[] aclone(Object[] xs){
 	return xs.clone();
+}
+
+public static CallSite bsm_constant(MethodHandles.Lookup lookup, String kind, MethodType type, Object data) {
+  return RTMetaFactories.bsm_constant(lookup, kind, type, data);	
 }
 
 
