@@ -356,6 +356,13 @@ static public Var var(String ns, String name, Object init){
 	return Var.intern(Namespace.findOrCreate(Symbol.intern(null, ns)), Symbol.intern(null, name), init);
 }
 
+//metaAsString should not contain the macro key
+static public void varWithRoot(String varNs, String varName, String metaAsString, Object root) {
+	Var var = RT.var(varNs, varName);
+	var.setLazyMeta(metaAsString);
+	var.bindRoot(root);
+}
+
 public static void loadResourceScript(String name) throws IOException{
 	loadResourceScript(name, true);
 }

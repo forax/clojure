@@ -90,6 +90,7 @@ public final Symbol sym;
 public final Namespace ns;
 
 //IPersistentMap _meta;
+private String metaAsString;
 
 public static Object getThreadBindingFrame(){
 	return dvals.get();
@@ -235,6 +236,30 @@ public Object doReset(Object val)  {
     return val;
     }
 
+synchronized public IPersistentMap meta() {
+	IPersistentMap meta = super.meta();
+	if (meta != null)
+		return meta;
+	String metaAsString = this.metaAsString;
+	if (metaAsString == null)
+		return null;
+	
+	//decode
+	meta = (IPersistentMap) RT.readString(metaAsString);
+  
+	//metaAsString and meta are exclusive, also free memory
+	this.metaAsString = null;	
+	
+	//ensure these basis keys
+	return resetMeta(meta.assoc(nameKey, sym).assoc(nsKey, ns));
+}
+
+
+synchronized void setLazyMeta(String metaAsString) {
+	resetMeta(null);
+	this.metaAsString = metaAsString;
+}
+
 public void setMeta(IPersistentMap m) {
     //ensure these basis keys
     resetMeta(m.assoc(nameKey, sym).assoc(nsKey, ns));
@@ -278,7 +303,11 @@ synchronized public void bindRoot(Object root){
 	Object oldroot = this.root;
 	this.root = root;
 	++rev;
-        alterMeta(dissoc, RT.list(macroKey));
+	
+	// per construction, we know that if the metaAsString is set, there is no macro flag
+	if (metaAsString == null)
+		alterMeta(dissoc, RT.list(macroKey));
+	
     notifyWatches(oldroot,this.root);
 }
 

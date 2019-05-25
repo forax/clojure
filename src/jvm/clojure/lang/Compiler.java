@@ -83,6 +83,7 @@ static final Keyword inlineKey = Keyword.intern(null, "inline");
 static final Keyword inlineAritiesKey = Keyword.intern(null, "inline-arities");
 static final Keyword staticKey = Keyword.intern(null, "static");
 static final Keyword arglistsKey = Keyword.intern(null, "arglists");
+static final Keyword macroKey = Keyword.intern(null, "macro");
 static final Symbol INVOKE_STATIC = Symbol.intern("invokeStatic");
 
 static final Keyword volatileKey = Keyword.intern(null, "volatile");
@@ -418,6 +419,7 @@ static class DefExpr implements Expr{
 	final static Method setTagMethod = Method.getMethod("void setTag(clojure.lang.Symbol)");
 	final static Method setMetaMethod = Method.getMethod("void setMeta(clojure.lang.IPersistentMap)");
 	final static Method setDynamicMethod = Method.getMethod("clojure.lang.Var setDynamic(boolean)");
+	final static Method varWithRootMethod = Method.getMethod("void varWithRoot(java.lang.String, java.lang.String, java.lang.String, java.lang.Object)");
 	final static Method symintern = Method.getMethod("clojure.lang.Symbol intern(String, String)");
 	final static Method internVar = Method.getMethod("clojure.lang.Var refer(clojure.lang.Symbol, clojure.lang.Var)");
 
@@ -474,7 +476,24 @@ static class DefExpr implements Expr{
 	}
 
 	public void emit(C context, ObjExpr objx, GeneratorAdapter gen){
-		objx.emitVar(gen, var);
+		// optimize for the common case
+		IPersistentMap metaMap;
+		if (initProvided && meta != null && !shadowsCoreMapping && !isDynamic && context == C.STATEMENT &&
+				isExprEncodableAsString(meta) && !RT.booleanCast((metaMap = (IPersistentMap)meta.eval()).valAt(macroKey))) {
+			
+			gen.push(var.ns.name.toString());
+			gen.push(var.sym.toString());
+			gen.visitLdcInsn(RT.printString(metaMap));
+			if(init instanceof FnExpr)
+				((FnExpr)init).emitForDefn(objx, gen);
+			else
+			  init.emit(C.EXPRESSION, objx, gen);
+			gen.invokeStatic(RT_TYPE, varWithRootMethod);
+			return;
+		}
+		
+		// emit the var on stack directly
+		objx.emitValue(var, gen);
 
 		if (shadowsCoreMapping)
 		{
@@ -518,6 +537,28 @@ static class DefExpr implements Expr{
 			gen.pop();
 	}
 
+	private static boolean isExprEncodableAsString(Expr expr) {
+		if (expr instanceof LiteralExpr)
+			return true;
+		if (expr instanceof VectorExpr)
+			{
+			IPersistentVector args = ((VectorExpr) expr).args;
+			for(int i = 0; i < args.count(); i++)
+				if (!isExprEncodableAsString((Expr)args.nth(i)))
+					return false;
+			return true;
+			}
+		if (expr instanceof MapExpr)
+			{
+			IPersistentVector keyvals = ((MapExpr) expr).keyvals;
+			for(int i = 0; i < keyvals.count(); i++)
+				if (!isExprEncodableAsString((Expr) keyvals.nth(i)))
+					return false;
+			return true;
+			}
+		return false;
+	}
+	
 	public boolean hasJavaClass(){
 		return true;
 	}
@@ -7727,7 +7768,7 @@ static void compile1(GeneratorAdapter gen, ObjExpr objx, Object form) {
 			objx.keywords = (IPersistentMap) KEYWORDS.deref();
 			objx.vars = (IPersistentMap) VARS.deref();
 			objx.constants = (PersistentVector) CONSTANTS.deref();
-			expr.emit(C.EXPRESSION, objx, gen);
+			expr.emit(C.STATEMENT, objx, gen);
 			expr.eval();
 			}
 		}
