@@ -14,6 +14,7 @@ package clojure.lang;
 
 import java.io.ObjectStreamException;
 import java.io.Serializable;
+import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -43,6 +44,29 @@ static public class Unbound extends AFn{
 
 	public Object throwArity(int n){
 		throw new IllegalStateException("Attempting to call unbound fn: " + v);
+	}
+}
+
+private final class Lazy {
+	private final String rootClassName;
+	
+	Lazy(String rootClassName) {
+		this.rootClassName = rootClassName;
+	}
+	
+	Object resolve() {
+		return resolveFn(rootClassName);
+	}
+}
+
+static Object resolveFn(String rootClassName) {
+	Class<?> rootClass = RT.classForName(rootClassName);
+	try {
+		return rootClass.getConstructor().newInstance();
+	} catch (InvocationTargetException e) {
+		throw Util.sneakyThrow(e.getCause());
+	} catch (InstantiationException | IllegalAccessException | NoSuchMethodException e) {
+		throw Util.runtimeException("can't create instance of " + rootClass.getName(), e);
 	}
 }
 
@@ -90,7 +114,6 @@ public final Symbol sym;
 public final Namespace ns;
 
 //IPersistentMap _meta;
-private String metaAsString;
 
 public static Object getThreadBindingFrame(){
 	return dvals.get();
@@ -192,8 +215,15 @@ public boolean isBound(){
 }
 
 final public Object get(){
-	if(!threadBound.get())
+	if(!threadBound.get()) {
+		Object root = this.root;
+		if (!(root instanceof Lazy)) {
+			return root;
+		}
+		root = ((Lazy)root).resolve();
+		this.root = root;
 		return root;
+	}
 	return deref();
 }
 
@@ -201,11 +231,22 @@ final public Object deref(){
 	TBox b = getThreadBinding();
 	if(b != null)
 		return b.val;
+	Object root = this.root;
+	if (!(root instanceof Lazy)) {
+		return root;
+	}
+	root = ((Lazy)root).resolve();
+	this.root = root;
 	return root;
 }
 
 public void setValidator(IFn vf){
-	if(hasRoot())
+	Object root = this.root;
+	if (root instanceof Lazy) {
+		root = ((Lazy)root).resolve();
+		this.root = root;
+	}
+	if(!(root instanceof Unbound))
 		validate(vf, root);
 	validator = vf;
 }
@@ -236,30 +277,6 @@ public Object doReset(Object val)  {
     return val;
     }
 
-synchronized public IPersistentMap meta() {
-	IPersistentMap meta = super.meta();
-	if (meta != null)
-		return meta;
-	String metaAsString = this.metaAsString;
-	if (metaAsString == null)
-		return null;
-	
-	//decode
-	meta = (IPersistentMap) RT.readString(metaAsString);
-  
-	//metaAsString and meta are exclusive, also free memory
-	this.metaAsString = null;	
-	
-	//ensure these basis keys
-	return resetMeta(meta.assoc(nameKey, sym).assoc(nsKey, ns));
-}
-
-
-synchronized void setLazyMeta(String metaAsString) {
-	resetMeta(null);
-	this.metaAsString = metaAsString;
-}
-
 public void setMeta(IPersistentMap m) {
     //ensure these basis keys
     resetMeta(m.assoc(nameKey, sym).assoc(nsKey, ns));
@@ -282,6 +299,11 @@ public boolean isPublic(){
 }
 
 final public Object getRawRoot(){
+		Object root = this.root;
+		if (!(root instanceof Lazy))
+		  return root;
+		root = ((Lazy)root).resolve();
+		this.root = root;
 		return root;
 }
 
@@ -303,12 +325,13 @@ synchronized public void bindRoot(Object root){
 	Object oldroot = this.root;
 	this.root = root;
 	++rev;
-	
-	// per construction, we know that if the metaAsString is set, there is no macro flag
-	if (metaAsString == null)
-		alterMeta(dissoc, RT.list(macroKey));
-	
-    notifyWatches(oldroot,this.root);
+  resetMeta(meta().without(macroKey));
+  if (getWatches().count() > 0) {
+  	if (oldroot instanceof Lazy) {
+  		oldroot = ((Lazy)oldroot).resolve();
+  	}
+  	notifyWatches(oldroot, root);
+  }
 }
 
 synchronized void swapRoot(Object root){
@@ -316,7 +339,25 @@ synchronized void swapRoot(Object root){
 	Object oldroot = this.root;
 	this.root = root;
 	++rev;
-    notifyWatches(oldroot,root);
+	if (getWatches().count() > 0) {
+		if (oldroot instanceof Lazy) {
+			oldroot = ((Lazy)oldroot).resolve();
+		}
+    notifyWatches(oldroot, root);
+	}
+}
+
+synchronized boolean trySwapLazyRoot(String rootClassName){
+	// check if we can lazily create the root
+	IFn validator = getValidator();
+	IPersistentMap watches = this.getWatches();
+	if (validator != null || watches.count() != 0) {
+		return false;
+	}
+	
+	this.root = new Lazy(rootClassName);
+	++rev;
+  return true;
 }
 
 synchronized public void unbindRoot(){
@@ -325,18 +366,24 @@ synchronized public void unbindRoot(){
 }
 
 synchronized public void commuteRoot(IFn fn) {
-	Object newRoot = fn.invoke(root);
+	Object oldroot = this.root;
+	if (oldroot instanceof Lazy) {
+		oldroot = ((Lazy)oldroot).resolve();
+	}
+	Object newRoot = fn.invoke(oldroot);
 	validate(getValidator(), newRoot);
-	Object oldroot = root;
 	this.root = newRoot;
 	++rev;
     notifyWatches(oldroot,newRoot);
 }
 
 synchronized public Object alterRoot(IFn fn, ISeq args) {
-	Object newRoot = fn.applyTo(RT.cons(root, args));
+	Object oldroot = this.root;
+	if (oldroot instanceof Lazy) {
+		oldroot = ((Lazy)oldroot).resolve();
+	}
+	Object newRoot = fn.applyTo(RT.cons(oldroot, args));
 	validate(getValidator(), newRoot);
-	Object oldroot = root;
 	this.root = newRoot;
 	++rev;
     notifyWatches(oldroot,newRoot);

@@ -419,7 +419,8 @@ static class DefExpr implements Expr{
 	final static Method setTagMethod = Method.getMethod("void setTag(clojure.lang.Symbol)");
 	final static Method setMetaMethod = Method.getMethod("void setMeta(clojure.lang.IPersistentMap)");
 	final static Method setDynamicMethod = Method.getMethod("clojure.lang.Var setDynamic(boolean)");
-	final static Method varWithRootMethod = Method.getMethod("void varWithRoot(java.lang.String, java.lang.String, java.lang.String, java.lang.Object)");
+	final static Method varWithRootMethod = Method.getMethod("void varWithRoot(java.lang.String, java.lang.String, java.lang.Object, java.lang.Object)");
+	final static Method varWithLazyRootMethod = Method.getMethod("void varWithLazyRoot(java.lang.String, java.lang.String, java.lang.Object, java.lang.String)");
 	final static Method symintern = Method.getMethod("clojure.lang.Symbol intern(String, String)");
 	final static Method internVar = Method.getMethod("clojure.lang.Var refer(clojure.lang.Symbol, clojure.lang.Var)");
 
@@ -477,18 +478,21 @@ static class DefExpr implements Expr{
 
 	public void emit(C context, ObjExpr objx, GeneratorAdapter gen){
 		// optimize for the common case
-		IPersistentMap metaMap;
-		if (initProvided && meta != null && !shadowsCoreMapping && !isDynamic && context == C.STATEMENT &&
-				isExprEncodableAsString(meta) && !RT.booleanCast((metaMap = (IPersistentMap)meta.eval()).valAt(macroKey))) {
-			
+		if (initProvided && meta != null && !shadowsCoreMapping && !isDynamic && context == C.STATEMENT ) {
 			gen.push(var.ns.name.toString());
 			gen.push(var.sym.toString());
-			gen.visitLdcInsn(RT.printString(metaMap));
-			if(init instanceof FnExpr)
-				((FnExpr)init).emitForDefn(objx, gen);
+			meta.emit(C.EXPRESSION, objx, gen);
+			FnExpr fn;
+			if(init instanceof FnExpr && (fn = (FnExpr)init).closes.count() == 0)
+			  {
+				gen.push(fn.objtype.getClassName());
+				gen.invokeStatic(RT_TYPE, varWithLazyRootMethod);
+			  }
 			else
+			  {
 			  init.emit(C.EXPRESSION, objx, gen);
-			gen.invokeStatic(RT_TYPE, varWithRootMethod);
+			  gen.invokeStatic(RT_TYPE, varWithRootMethod);
+			  }
 			return;
 		}
 		
@@ -535,28 +539,6 @@ static class DefExpr implements Expr{
 
 		if(context == C.STATEMENT)
 			gen.pop();
-	}
-
-	private static boolean isExprEncodableAsString(Expr expr) {
-		if (expr instanceof LiteralExpr)
-			return true;
-		if (expr instanceof VectorExpr)
-			{
-			IPersistentVector args = ((VectorExpr) expr).args;
-			for(int i = 0; i < args.count(); i++)
-				if (!isExprEncodableAsString((Expr)args.nth(i)))
-					return false;
-			return true;
-			}
-		if (expr instanceof MapExpr)
-			{
-			IPersistentVector keyvals = ((MapExpr) expr).keyvals;
-			for(int i = 0; i < keyvals.count(); i++)
-				if (!isExprEncodableAsString((Expr) keyvals.nth(i)))
-					return false;
-			return true;
-			}
-		return false;
 	}
 	
 	public boolean hasJavaClass(){
