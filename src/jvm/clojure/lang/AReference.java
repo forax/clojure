@@ -28,7 +28,7 @@ public class AReference implements IReference {
     }
 
     synchronized public IPersistentMap alterMeta(IFn alter, ISeq args)  {
-        _meta = (IPersistentMap) alter.applyTo(new Cons(meta(), args));
+        _meta = (IPersistentMap) alter.applyTo(new Cons(_meta, args));
         return _meta;
     }
 
@@ -36,4 +36,5 @@ public class AReference implements IReference {
         _meta = m;
         return m;
     }
+
 }
